@@ -181,6 +181,7 @@ const EditorPage = () => {
         const loadedFiles = [];
         let mainFile = null;
         let mainCode = '';
+        let encodingWarnings = [];
 
         // Process all files in the zip
         const filePromises = Object.keys(zipContents.files).map(async (filename) => {
@@ -202,7 +203,34 @@ const EditorPage = () => {
           if (!supportedExts.includes(ext)) return;
 
           try {
-            const content = await zipFile.async('text');
+            // Try to read as text with multiple encoding fallbacks
+            let content;
+            try {
+              // First try UTF-8 (default)
+              content = await zipFile.async('text');
+            } catch (encodingError) {
+              // If fails, try to read as binary and convert
+              const binaryContent = await zipFile.async('uint8array');
+              // Try Windows-1251 (common for Russian PAWNO projects)
+              const decoder = new TextDecoder('windows-1251');
+              content = decoder.decode(binaryContent);
+              encodingWarnings.push(`${filename}: конвертировано из Windows-1251`);
+            }
+            
+            // Clean up any BOM or invalid characters
+            content = content.replace(/^\uFEFF/, '') // Remove BOM
+                           .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '') // Remove control chars
+                           .replace(/[^\x09\x0A\x0D\x20-\xFF\u0400-\u04FF]/g, '?'); // Replace invalid chars with ?
+            
+            // Check for garbled text (mojibake)
+            if (/[\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF]/.test(content.substring(0, 500))) {
+              // Contains CJK characters - likely encoding issue
+              const backupDecoder = new TextDecoder('cp866'); // Another common Russian encoding
+              const binaryContent = await zipFile.async('uint8array');
+              content = backupDecoder.decode(binaryContent);
+              encodingWarnings.push(`${filename}: обнаружена неверная кодировка, сконвертировано`);
+            }
+            
             loadedFiles.push({ name: filename, content });
 
             // Look for main file (.pwn for Pawno, .js for JS, etc.)
@@ -215,6 +243,7 @@ const EditorPage = () => {
             }
           } catch (error) {
             console.error(`Error reading ${filename}:`, error);
+            encodingWarnings.push(`${filename}: ошибка чтения (${error.message})`);
           }
         });
 
@@ -241,13 +270,19 @@ const EditorPage = () => {
           addNotification(`Проект загружен: ${loadedFiles.length} файл(ов)`, 'success');
         }
 
+        // Show encoding warnings if any
+        if (encodingWarnings.length > 0) {
+          addNotification(`Внимание: ${encodingWarnings.length} файл(ов) с проблемами кодировки`, 'error');
+          console.log('Encoding warnings:', encodingWarnings);
+        }
+
         // Set project name from zip file
         setProjectName(file.name.replace(/\.[^/.]+$/, ''));
 
         if (soundEnabled) playSound('startup');
       } catch (error) {
         console.error('Error loading ZIP:', error);
-        addNotification('Ошибка при распаковке архива', 'error');
+        addNotification('Ошибка при распаковке архива: ' + error.message, 'error');
         if (soundEnabled) playSound('error');
       } finally {
         setIsCompiling(false);
