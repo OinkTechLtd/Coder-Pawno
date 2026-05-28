@@ -6,6 +6,20 @@ class Compiler {
 
     // Clean the code from any BOM or invalid characters
     let cleanCode = code;
+    
+    // Detect and report encoding issues
+    let encodingNote = '';
+    
+    // Check for CJK characters (indicates wrong encoding)
+    if (/[\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF]/.test(cleanCode.substring(0, 1000))) {
+      encodingNote = 'ПРЕДУПРЕЖДЕНИЕ: Обнаружены символы неверной кодировки. Возможно, файл был сохранён в неправильной кодировке.';
+      output.push(encodingNote);
+      output.push('');
+      
+      // Try to clean up garbled characters
+      cleanCode = cleanCode.replace(/[\u4E00-\u9FFF\u3040-\u309F\u30A0-\u30FF]/g, '');
+    }
+    
     // Remove BOM (Byte Order Mark)
     if (cleanCode.charCodeAt(0) === 0xFEFF) {
       cleanCode = cleanCode.slice(1);
@@ -13,6 +27,9 @@ class Compiler {
     // Remove any null bytes and other control characters that might cause issues
     cleanCode = cleanCode.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
     
+    // Replace any remaining invalid Unicode characters with placeholder
+    cleanCode = cleanCode.replace(/[^\x09\x0A\x0D\x20-\xFF\u0400-\u04FF]/g, '?');
+
     output.push('Pawn compiler version 3.2.3664');
     output.push('Copyright (c) 1997-2006, ITB CompuPhase');
     output.push('');
@@ -152,6 +169,14 @@ class Compiler {
       errors.forEach(err => output.push(err));
       output.push('');
       output.push(`Compilation aborted with ${errors.length} error(s)`);
+      
+      // Add helpful message for common encoding issues
+      if (encodingNote) {
+        output.push('');
+        output.push('СОВЕТ: Проверьте кодировку файла. Рекомендуется использовать UTF-8 или Windows-1251.');
+        output.push('Если вы видите кракозябры (䫿 譴ඨ蠮), загрузите файл заново с правильной кодировкой.');
+      }
+      
       return { success: false, output };
     }
 
